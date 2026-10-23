@@ -12,7 +12,7 @@ cheaply testable at arbitrary values.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import asin, cos, radians, sin, sqrt
+from math import asin, atan2, cos, degrees, radians, sin, sqrt
 
 EARTH_RADIUS_MI = 3958.7613
 _EPSILON_MI = 1e-6
@@ -47,11 +47,62 @@ def haversine_mi(a: Coordinate, b: Coordinate) -> float:
     return 2 * EARTH_RADIUS_MI * asin(sqrt(h))
 
 
-def _cumulative_distances(polyline: list[Coordinate]) -> list[float]:
+def cumulative_distances(polyline: list[Coordinate]) -> list[float]:
     cumulative = [0.0]
     for prev, cur in zip(polyline, polyline[1:]):
         cumulative.append(cumulative[-1] + haversine_mi(prev, cur))
     return cumulative
+
+
+def bearing_deg(a: Coordinate, b: Coordinate) -> float:
+    """Initial compass bearing (0-360) from a to b along a great circle."""
+    lat1, lon1, lat2, lon2 = radians(a.lat), radians(a.lon), radians(b.lat), radians(b.lon)
+    dlon = lon2 - lon1
+    x = sin(dlon) * cos(lat2)
+    y = cos(lat1) * sin(lat2) - sin(lat1) * cos(lat2) * cos(dlon)
+    return degrees(atan2(x, y)) % 360
+
+
+def destination_point(origin: Coordinate, bearing: float, distance_mi: float) -> Coordinate:
+    """Standard great-circle destination-point formula: origin + a bearing and distance."""
+    lat1 = radians(origin.lat)
+    lon1 = radians(origin.lon)
+    bearing_rad = radians(bearing)
+    angular_distance = distance_mi / EARTH_RADIUS_MI
+
+    lat2 = asin(
+        sin(lat1) * cos(angular_distance) + cos(lat1) * sin(angular_distance) * cos(bearing_rad)
+    )
+    lon2 = lon1 + atan2(
+        sin(bearing_rad) * sin(angular_distance) * cos(lat1),
+        cos(angular_distance) - sin(lat1) * sin(lat2),
+    )
+    return Coordinate(lat=degrees(lat2), lon=degrees(lon2))
+
+
+def locate_along_route(
+    polyline: list[Coordinate], cumulative: list[float], target_mi: float
+) -> tuple[Coordinate, float]:
+    """
+    Point and local bearing at target_mi along the route, linearly
+    interpolated between the bracketing polyline vertices. Shared by
+    corridor-heatmap sampling (routing/heatmap.py) and via-point
+    fallback-route generation (integrations/routing_client.py) — both need
+    "a point along this route, facing this direction" for the same reason:
+    projecting perpendicular to the direction of travel at that point.
+    """
+    for i in range(len(cumulative) - 1):
+        seg_start, seg_end = cumulative[i], cumulative[i + 1]
+        if seg_start <= target_mi <= seg_end:
+            a, b = polyline[i], polyline[i + 1]
+            bearing = bearing_deg(a, b)
+            if seg_end == seg_start:
+                return a, bearing
+            frac = (target_mi - seg_start) / (seg_end - seg_start)
+            point = Coordinate(lat=a.lat + frac * (b.lat - a.lat), lon=a.lon + frac * (b.lon - a.lon))
+            return point, bearing
+    last_two = polyline[-2:] if len(polyline) > 1 else polyline * 2
+    return polyline[-1], bearing_deg(last_two[0], last_two[1])
 
 
 def _interpolate(
@@ -103,7 +154,7 @@ def generate_checkpoints(
     if len(polyline) < 2:
         raise ValueError("polyline must have at least 2 points")
 
-    cumulative = _cumulative_distances(polyline)
+    cumulative = cumulative_distances(polyline)
     polyline_total = cumulative[-1]
     if polyline_total <= 0:
         raise ValueError("polyline has zero total length")
