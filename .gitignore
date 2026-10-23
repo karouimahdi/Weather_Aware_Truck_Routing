@@ -19,7 +19,10 @@ frontend/.env.local
 .idea/
 .DS_Store
 
-
+# Local AI-assistant tooling/config — not part of the delivered project
+.claude/
+claude.md
+IMPLEMENTATION_PLAN.md
 
 # Misc
 *.log
