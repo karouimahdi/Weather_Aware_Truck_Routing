@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, type MutableRefObject } from "react";
 import {
+  config as maplibreConfig,
   LngLatBounds,
   Map as MapLibreMap,
   Marker,
@@ -10,6 +11,7 @@ import {
   type MapLayerMouseEvent,
   type MapMouseEvent,
 } from "maplibre-gl";
+import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?url";
 import "maplibre-gl/dist/maplibre-gl.css";
 import "../App.css"; // .map-view / .truck-marker* — raw-DOM marker styles MUI's theme can't reach
 import type { FeatureCollection, Point } from "geojson";
@@ -18,6 +20,19 @@ import { HEATMAP_CLOUD_STYLES, valuesForLayer } from "../lib/heatmapStyles";
 import { RISK_COLORS, RISK_LABELS } from "../lib/riskColors";
 import { cumulativeDistances, positionAtHour, type RoutePosition } from "../lib/routeGeometry";
 import { useTripUIStore } from "../store/useTripUIStore";
+
+// maplibre-gl resolves its worker script at runtime via
+// `new URL('./maplibre-gl-worker.mjs', import.meta.url)`, which Vite's
+// production build doesn't reliably turn into a working asset URL — the
+// request 404s and Vercel's SPA catch-all rewrite serves index.html back
+// instead, so the browser rejects it ("Worker failed to load") and the
+// map silently never fires its "load" event: no route lines, no
+// checkpoints, no heatmap, no fitBounds/auto-zoom, confirmed live via a
+// deployed-site console capture. The `?url` import makes Vite bundle the
+// worker as a real asset with a correct hashed URL; `config.WORKER_URL`
+// is maplibre-gl's own documented override for exactly this bundler
+// situation, and must be set before any Map is constructed.
+maplibreConfig.WORKER_URL = maplibreWorkerUrl;
 
 // OpenFreeMap: free, unlimited, no API key — avoids a third credential
 // for a demo basemap.
